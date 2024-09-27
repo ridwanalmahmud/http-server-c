@@ -5,6 +5,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #define DS_SS_IMPLEMENTATION 
 #define DS_SB_IMPLEMENTATION
 #define DS_IO_IMPLEMENTATION
@@ -66,8 +68,45 @@ int main() {
         char *path = NULL;
         ds_string_slice_to_owned(&token, &path);
 
+        struct stat path_stat;
+        result = stat(path + 1, &path_stat);
+        if (result != 0) {
+            DS_LOG_ERROR("stat");
+            continue;
+        }
+
         char *content = NULL;
-        int content_len = ds_io_read_file(path + 1, &content);
+        int content_len = 0;
+
+        if (S_ISREG(path_stat.st_mode)) {
+            content_len = ds_io_read_file(path + 1, &content);
+        } else if (S_ISDIR(path_stat.st_mode)) {
+            ds_string_builder directory_builder;
+            ds_string_builder_init(&directory_builder);
+            ds_string_builder_append(
+                &directory_builder,
+                "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta "
+                "charset=\"UTF-8\">\n<title=\"Directory listing for "
+                "%s</title>\n</head>\n"
+                "<body>\n<h1>Directory listing for %s</h1>\n<hr>\n<ul>\n",
+                path, path);
+
+            DIR *directory = opendir(path + 1);
+            struct dirent *dir;
+            if (directory) {
+                while((dir = readdir(directory)) != NULL) {
+                    ds_string_builder_append(&directory_builder, "<li><a href=\"%s/%s\">%s</a></li>", path + 1, dir->d_name, dir->d_name);
+                }
+            }
+
+            ds_string_builder_append(&directory_builder, "</ul>\n<hr>\n</body>\n</html>\n");
+            ds_string_builder_build(&directory_builder, &content);
+            content_len = strlen(content);
+
+        } else {
+            DS_LOG_ERROR("mode not supported yest");
+            continue;
+        }
 
         ds_string_builder response_builder;
         ds_string_builder_init(&response_builder);
